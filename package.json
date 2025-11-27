@@ -5,7 +5,13 @@
   "main": "main.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "node index.js"
+    "dev": "node index.js",
+    "export:json": "node scripts/exportData.js --format json --output exports/data_$(date +%Y%m%d_%H%M%S).json --progress",
+    "export:csv": "node scripts/exportData.js --format csv --output exports/data_$(date +%Y%m%d_%H%M%S).csv --progress",
+    "export:all": "npm run export:json && npm run export:csv",
+    "view:stats": "node scripts/exportData.js --format json --limit 100 --pretty | node -e \"const data=JSON.parse(require('fs').readFileSync(0,'utf8')); console.log('\\n=== Stats Summary ==='); console.log('Total Records:', data.recordCount); console.log('Date Range:', data.data[0]?.timestamp, 'to', data.data[data.data.length-1]?.timestamp); console.log('Avg Multiplier:', (data.data.reduce((sum,r)=>sum+(r.multiplier||r.crashMultiplier||0),0)/data.data.length).toFixed(2));\"",
+    "data:cleanup": "node scripts/cleanupData.js",
+    "data:backup": "node scripts/backupData.js"
   },
   "keywords": [
     "betting",

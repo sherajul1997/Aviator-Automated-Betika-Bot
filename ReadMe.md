@@ -16,6 +16,7 @@ An intelligent automation tool for the Aviator game, leveraging Node.js, Puppete
 - [Requirements](#-requirements)
 - [Installation](#-installation)
 - [Configuration](#-configuration)
+- [Data Export & Management](#-data-export--management)
 - [Usage](#-usage)
 - [How It Works](#-how-it-works)
 - [Architecture](#-architecture)
@@ -110,6 +111,112 @@ BETTING_STRATEGIES: {
     // ... other strategies
 }
 ```
+
+## 📦 Data Export & Management
+
+The bot includes comprehensive data export and management capabilities for collecting and analyzing game data.
+
+### Available NPM Scripts
+
+#### Export Scripts
+```bash
+# Export data to JSON with timestamp
+npm run export:json
+
+# Export data to CSV with timestamp
+npm run export:csv
+
+# Export to both JSON and CSV formats
+npm run export:all
+
+# View quick statistics summary
+npm run view:stats
+```
+
+#### Data Management Scripts
+```bash
+# Archive old data files (older than 30 days by default)
+npm run data:cleanup
+
+# Create timestamped backup of all data
+npm run data:backup
+```
+
+### Manual Export Tool
+
+For advanced data export with custom filters, use the standalone export script:
+
+```bash
+# Export with date range filtering
+node scripts/exportData.js --format json --from 2024-01-01 --to 2024-12-31 --output data.json
+
+# Export last 100 games to CSV
+node scripts/exportData.js --format csv --limit 100 --output recent.csv
+
+# Export only winning bets
+node scripts/exportData.js --format json --won-only --bet-only --pretty
+
+# Pipe to other tools
+node scripts/exportData.js --format json --limit 10 | jq '.data[0]'
+```
+
+#### Export Options
+- `--format [json|csv]` - Output format (required)
+- `--output [filepath]` - Output file path (optional, defaults to stdout)
+- `--from [date]` - Start date filter (YYYY-MM-DD)
+- `--to [date]` - End date filter (YYYY-MM-DD)
+- `--limit [number]` - Maximum number of records
+- `--source [memory|database]` - Data source (auto-detected)
+- `--bet-only` - Only games where bets were placed
+- `--won-only` - Only winning bets
+- `--min-multiplier [number]` - Minimum multiplier filter
+- `--max-multiplier [number]` - Maximum multiplier filter
+- `--pretty` - Pretty print JSON output
+- `--progress` - Show progress indicators
+
+### Data Cleanup
+
+Archive old export files to keep your exports directory organized:
+
+```bash
+# Archive files older than 30 days (default)
+node scripts/cleanupData.js
+
+# Archive files older than 60 days
+node scripts/cleanupData.js --days 60
+
+# Preview what would be archived
+node scripts/cleanupData.js --dry-run
+```
+
+#### Cleanup Options
+- `--days [number]` - Archive files older than N days (default: 30)
+- `--dry-run` - Preview without moving files
+- `--quiet` - Suppress informational messages
+
+### Data Backup
+
+Create timestamped backups of your game data:
+
+```bash
+# Create JSON backup
+node scripts/backupData.js
+
+# Create both JSON and CSV backups
+node scripts/backupData.js --format both
+
+# Backup from specific source
+node scripts/backupData.js --source database
+
+# Backup to custom directory
+node scripts/backupData.js --output /path/to/backups
+```
+
+#### Backup Options
+- `--source [database|memory]` - Data source (auto-detected)
+- `--format [json|csv|both]` - Backup format (default: json)
+- `--output [directory]` - Backup directory (default: backups/)
+- `--quiet` - Suppress informational messages
 
 ## 🎮 How It Works
 
