@@ -19,6 +19,7 @@ class GameMonitor {
             lastCrashPoint: null,
             betPlaced: false
         };
+        this.gameStartTime = null; // Track game start time for duration calculation
     }
 
     isGameEnd(currentMultiplier) {
@@ -89,17 +90,64 @@ class GameMonitor {
             const gameState = await this.getGameState(frame);
             if (!gameState) return;
 
+            // Initialize game start time if not set
+            if (!this.gameStartTime && gameState.multiplier) {
+                this.gameStartTime = Date.now();
+            }
+
             // Detect game end based on multiplier change
             if (this.isGameEnd(gameState.multiplier)) {
                 logger.info(`Game ended at ${this.previousMultiplier}x, new game starting at ${gameState.multiplier}x`);
+
+                // Calculate game duration
+                const gameEndTime = Date.now();
+                const gameDuration = this.gameStartTime ? gameEndTime - this.gameStartTime : 0;
+
+                // Track bet details before handling result
+                const betWasPlaced = this.gameState.betPlaced;
+                const currentBetInfo = this.betManager.currentBet ? {
+                    amount: this.betManager.currentBet.amount,
+                    targetMultiplier: this.betManager.currentBet.targetMultiplier
+                } : null;
 
                 // Handle bet result first
                 if (this.betManager.isWaitingForResult) {
                     this.betManager.handleGameCrash(this.previousMultiplier);
                 }
 
-                // Update history with the completed game
+                // Capture complete game round data and store in history
                 if (this.previousMultiplier) {
+                    // Prepare game round data
+                    const gameRoundData = {
+                        multiplier: this.previousMultiplier,
+                        crashMultiplier: this.previousMultiplier,
+                        timestamp: new Date().toISOString(),
+                        betPlaced: betWasPlaced,
+                        gameDuration: gameDuration
+                    };
+
+                    // Add bet outcome details if a bet was placed
+                    if (betWasPlaced && currentBetInfo) {
+                        gameRoundData.betAmount = currentBetInfo.amount;
+                        gameRoundData.targetMultiplier = currentBetInfo.targetMultiplier;
+                        gameRoundData.actualMultiplier = this.previousMultiplier;
+
+                        // Determine if bet won (target reached before crash)
+                        const betWon = this.previousMultiplier >= currentBetInfo.targetMultiplier;
+                        gameRoundData.won = betWon;
+
+                        // Calculate profit/loss
+                        if (betWon) {
+                            gameRoundData.profit = currentBetInfo.amount * (currentBetInfo.targetMultiplier - 1);
+                        } else {
+                            gameRoundData.profit = -currentBetInfo.amount;
+                        }
+                    }
+
+                    // Store game round in stats tracker
+                    this.statsTracker.addGameRound(gameRoundData);
+
+                    // Update multiplier history for betting strategy
                     this.multiplierHistory.unshift(this.previousMultiplier);
                     if (this.multiplierHistory.length > this.historySize) {
                         this.multiplierHistory.pop();
@@ -107,9 +155,11 @@ class GameMonitor {
                     logger.info(`Updated multiplier history: [${this.multiplierHistory.join(', ')}]`);
                 }
 
+                // Reset game state for next round
                 this.gameState.inProgress = false;
                 this.gameState.lastCrashPoint = this.previousMultiplier;
                 this.gameState.betPlaced = false;
+                this.gameStartTime = gameEndTime; // Start tracking next game
             }
 
             // Calculate average including current game's multiplier
