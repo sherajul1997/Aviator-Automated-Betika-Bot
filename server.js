@@ -4,6 +4,8 @@ const socketIo = require('socket.io');
 const path = require('path');
 const logger = require('./util/logger');
 const dataExporter = require('./util/dataExporter');
+const analytics = require('./util/analytics');
+const database = require('./database/database');
 
 /**
  * Express API Server for Aviator Game Data Access
@@ -27,6 +29,10 @@ class AviatorDataServer {
         // Connected Socket.IO clients
         this.connectedClients = new Set();
 
+        // Cache for expensive analytical queries
+        this.analyticsCache = new Map();
+        this.cacheTTL = 5 * 60 * 1000; // 5 minutes cache TTL
+
         this.setupMiddleware();
         this.setupRoutes();
         this.setupSocketIO();
@@ -39,6 +45,39 @@ class AviatorDataServer {
     setStatsTracker(statsTracker) {
         this.statsTracker = statsTracker;
         logger.info('StatsTracker connected to API server');
+    }
+
+    /**
+     * Get cached result or execute function and cache result
+     * @param {string} cacheKey - Cache key
+     * @param {Function} fn - Function to execute if cache miss
+     * @returns {Promise<any>} - Cached or fresh result
+     */
+    async getCachedOrFetch(cacheKey, fn) {
+        const cached = this.analyticsCache.get(cacheKey);
+
+        if (cached && Date.now() - cached.timestamp < this.cacheTTL) {
+            logger.debug(`Cache hit for key: ${cacheKey}`);
+            return cached.data;
+        }
+
+        logger.debug(`Cache miss for key: ${cacheKey}, executing query`);
+        const data = await fn();
+
+        this.analyticsCache.set(cacheKey, {
+            data,
+            timestamp: Date.now()
+        });
+
+        return data;
+    }
+
+    /**
+     * Clear analytics cache (e.g., when new data is added)
+     */
+    clearAnalyticsCache() {
+        this.analyticsCache.clear();
+        logger.debug('Analytics cache cleared');
     }
 
     /**
@@ -299,6 +338,246 @@ class AviatorDataServer {
             }
 
             await handleExport(req, res, format);
+        });
+
+        // ===== ANALYTICS ENDPOINTS =====
+
+        /**
+         * GET /api/analytics/distribution
+         * Get multiplier distribution analysis with configurable ranges
+         * Query parameters:
+         *   - fromDate: Start date for filtering (ISO string)
+         *   - toDate: End date for filtering (ISO string)
+         *   - source: Data source ('memory' or 'database', default: 'memory')
+         *   - ranges: Custom ranges JSON array (optional)
+         */
+        this.app.get('/api/analytics/distribution', async (req, res) => {
+            try {
+                const { fromDate, toDate, source = 'memory', ranges } = req.query;
+
+                // Build cache key from query parameters
+                const cacheKey = `distribution:${source}:${fromDate || 'all'}:${toDate || 'all'}:${ranges || 'default'}`;
+
+                const result = await this.getCachedOrFetch(cacheKey, async () => {
+                    let gameData;
+
+                    // Fetch data from appropriate source
+                    if (source === 'database' && database.isConnectedToDatabase()) {
+                        const options = {};
+                        if (fromDate) options.fromDate = fromDate;
+                        if (toDate) options.toDate = toDate;
+                        gameData = await database.getGameHistory(options);
+                    } else if (this.statsTracker) {
+                        const options = {};
+                        if (fromDate) options.fromDate = fromDate;
+                        if (toDate) options.toDate = toDate;
+                        gameData = this.statsTracker.getGameHistory(options);
+                    } else {
+                        throw new Error('No data source available');
+                    }
+
+                    // Parse custom ranges if provided
+                    const analysisOptions = {};
+                    if (ranges) {
+                        try {
+                            analysisOptions.ranges = JSON.parse(ranges);
+                        } catch (err) {
+                            logger.warn(`Failed to parse custom ranges: ${err.message}`);
+                        }
+                    }
+
+                    // Calculate distribution using analytics module
+                    const distribution = analytics.calculateMultiplierDistribution(gameData, analysisOptions);
+
+                    return {
+                        success: true,
+                        source: source,
+                        dataCount: gameData.length,
+                        filters: { fromDate: fromDate || null, toDate: toDate || null },
+                        distribution: distribution
+                    };
+                });
+
+                res.json(result);
+            } catch (error) {
+                logger.error(`Error calculating distribution: ${error.message}`);
+                res.status(500).json({
+                    success: false,
+                    error: 'Failed to calculate distribution',
+                    message: error.message
+                });
+            }
+        });
+
+        /**
+         * GET /api/analytics/trends
+         * Get time-series trend analysis with grouping options
+         * Query parameters:
+         *   - interval: Time interval ('hour', 'day', 'week', 'month', default: 'hour')
+         *   - limit: Maximum number of periods to return (default: 24)
+         *   - fromDate: Start date for filtering (ISO string)
+         *   - toDate: End date for filtering (ISO string)
+         *   - source: Data source ('memory' or 'database', default: 'memory')
+         */
+        this.app.get('/api/analytics/trends', async (req, res) => {
+            try {
+                const { interval = 'hour', limit = 24, fromDate, toDate, source = 'memory' } = req.query;
+
+                // Validate interval
+                const validIntervals = ['hour', 'day', 'week', 'month'];
+                if (!validIntervals.includes(interval)) {
+                    return res.status(400).json({
+                        success: false,
+                        error: 'Invalid interval',
+                        message: `Interval must be one of: ${validIntervals.join(', ')}`
+                    });
+                }
+
+                // Build cache key
+                const cacheKey = `trends:${source}:${interval}:${limit}:${fromDate || 'all'}:${toDate || 'all'}`;
+
+                const result = await this.getCachedOrFetch(cacheKey, async () => {
+                    let gameData;
+
+                    // Fetch data from appropriate source
+                    if (source === 'database' && database.isConnectedToDatabase()) {
+                        const options = { limit: 10000 }; // Large limit for trend analysis
+                        if (fromDate) options.fromDate = fromDate;
+                        if (toDate) options.toDate = toDate;
+                        gameData = await database.getGameHistory(options);
+                    } else if (this.statsTracker) {
+                        const options = {};
+                        if (fromDate) options.fromDate = fromDate;
+                        if (toDate) options.toDate = toDate;
+                        gameData = this.statsTracker.getGameHistory(options);
+                    } else {
+                        throw new Error('No data source available');
+                    }
+
+                    // Perform time-series analysis
+                    const trendAnalysis = analytics.analyzeTimeSeries(gameData, {
+                        interval: interval,
+                        limit: parseInt(limit)
+                    });
+
+                    return {
+                        success: true,
+                        source: source,
+                        dataCount: gameData.length,
+                        filters: { fromDate: fromDate || null, toDate: toDate || null },
+                        analysis: trendAnalysis
+                    };
+                });
+
+                res.json(result);
+            } catch (error) {
+                logger.error(`Error analyzing trends: ${error.message}`);
+                res.status(500).json({
+                    success: false,
+                    error: 'Failed to analyze trends',
+                    message: error.message
+                });
+            }
+        });
+
+        /**
+         * GET /api/analytics/performance
+         * Get comprehensive strategy performance evaluation
+         * Query parameters:
+         *   - fromDate: Start date for filtering (ISO string)
+         *   - toDate: End date for filtering (ISO string)
+         *   - source: Data source ('memory' or 'database', default: 'memory')
+         *   - includeVolatility: Include volatility analysis (default: false)
+         *   - includePatterns: Include pattern detection (default: false)
+         */
+        this.app.get('/api/analytics/performance', async (req, res) => {
+            try {
+                const {
+                    fromDate,
+                    toDate,
+                    source = 'memory',
+                    includeVolatility = 'false',
+                    includePatterns = 'false'
+                } = req.query;
+
+                // Build cache key
+                const cacheKey = `performance:${source}:${fromDate || 'all'}:${toDate || 'all'}:${includeVolatility}:${includePatterns}`;
+
+                const result = await this.getCachedOrFetch(cacheKey, async () => {
+                    let gameData, betData;
+
+                    // Fetch data from appropriate source
+                    if (source === 'database' && database.isConnectedToDatabase()) {
+                        const gameOptions = {};
+                        const betOptions = {};
+                        if (fromDate) {
+                            gameOptions.fromDate = fromDate;
+                            betOptions.fromDate = fromDate;
+                        }
+                        if (toDate) {
+                            gameOptions.toDate = toDate;
+                            betOptions.toDate = toDate;
+                        }
+                        gameData = await database.getGameHistory(gameOptions);
+                        betData = await database.getBetHistory(betOptions);
+                    } else if (this.statsTracker) {
+                        const options = {};
+                        if (fromDate) options.fromDate = fromDate;
+                        if (toDate) options.toDate = toDate;
+
+                        gameData = this.statsTracker.getGameHistory(options);
+                        // Filter for bets only
+                        betData = this.statsTracker.getGameHistory({ ...options, betPlacedOnly: true });
+                    } else {
+                        throw new Error('No data source available');
+                    }
+
+                    // Build comprehensive performance report
+                    const performanceReport = {
+                        dataCount: {
+                            games: gameData.length,
+                            bets: betData.length
+                        },
+                        filters: { fromDate: fromDate || null, toDate: toDate || null }
+                    };
+
+                    // Always include core ROI and win rate analysis
+                    if (betData.length > 0) {
+                        performanceReport.roi = analytics.calculateROI(betData);
+                        performanceReport.winRateByMultiplier = analytics.getWinRateByMultiplier(betData);
+                        performanceReport.strategyEvaluation = analytics.evaluateStrategyPerformance(betData, gameData);
+                    } else {
+                        performanceReport.roi = { overall: null, message: 'No betting data available' };
+                        performanceReport.winRateByMultiplier = { segments: [], overall: null };
+                        performanceReport.strategyEvaluation = { evaluation: null, message: 'No betting data available' };
+                    }
+
+                    // Optional: Include volatility analysis
+                    if (includeVolatility === 'true' && gameData.length > 0) {
+                        performanceReport.volatility = analytics.calculateVolatility(gameData);
+                    }
+
+                    // Optional: Include pattern detection
+                    if (includePatterns === 'true' && gameData.length > 0) {
+                        performanceReport.patterns = analytics.identifyPatterns(gameData);
+                    }
+
+                    return {
+                        success: true,
+                        source: source,
+                        report: performanceReport
+                    };
+                });
+
+                res.json(result);
+            } catch (error) {
+                logger.error(`Error generating performance report: ${error.message}`);
+                res.status(500).json({
+                    success: false,
+                    error: 'Failed to generate performance report',
+                    message: error.message
+                });
+            }
         });
 
         // Get list of exported files
