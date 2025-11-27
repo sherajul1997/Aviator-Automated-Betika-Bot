@@ -1,5 +1,7 @@
 const logger = require('../util/logger');
 const FrameHelper = require('../util/frameHelper');
+const database = require('../database/database');
+const config = require('../util/config');
 
 class BetManager {
     constructor(config, strategy, statsTracker) {
@@ -113,6 +115,25 @@ class BetManager {
                     timestamp: Date.now(),
                     won: true
                 });
+
+                // Save bet history to database if enabled
+                if (config.DATABASE.enableLogging && database.isConnectedToDatabase()) {
+                    try {
+                        await database.saveBetHistory({
+                            betAmount: this.currentBet.amount,
+                            targetMultiplier: this.strategy.targetMultiplier,
+                            actualMultiplier: this.strategy.targetMultiplier,
+                            profitLoss: profit,
+                            won: true,
+                            timestamp: new Date().toISOString()
+                        });
+                        logger.debug(`Bet history saved to database (win): ${profit.toFixed(2)}`);
+                    } catch (err) {
+                        // Log error but don't stop bot operation
+                        logger.error(`Failed to save bet history to database: ${err.message}`);
+                    }
+                }
+
                 this.isWaitingForResult = false;
                 this.currentBet = null;
             }
@@ -121,18 +142,38 @@ class BetManager {
         }
     }
 
-    handleGameCrash(multiplier) {
+    async handleGameCrash(multiplier) {
         if (this.isWaitingForResult && this.currentBet) {
             logger.info(`Game crashed at ${multiplier}x - Lost bet of ${this.currentBet.amount}`);
+
+            const loss = -this.currentBet.amount;
 
             this.statsTracker.addTrade({
                 betAmount: this.currentBet.amount,
                 multiplier: multiplier,
                 profit: 0,
-                loss: -this.currentBet.amount,
+                loss: loss,
                 timestamp: Date.now(),
                 won: false
             });
+
+            // Save bet history to database if enabled
+            if (config.DATABASE.enableLogging && database.isConnectedToDatabase()) {
+                try {
+                    await database.saveBetHistory({
+                        betAmount: this.currentBet.amount,
+                        targetMultiplier: this.currentBet.targetMultiplier,
+                        actualMultiplier: multiplier,
+                        profitLoss: loss,
+                        won: false,
+                        timestamp: new Date().toISOString()
+                    });
+                    logger.debug(`Bet history saved to database (loss): ${loss.toFixed(2)}`);
+                } catch (err) {
+                    // Log error but don't stop bot operation
+                    logger.error(`Failed to save bet history to database: ${err.message}`);
+                }
+            }
 
             this.isWaitingForResult = false;
             this.currentBet = null;

@@ -3,6 +3,8 @@ const StatsTracker = require("./statsTracker");
 const BetManager = require("./betManager");
 const FrameHelper = require("../util/frameHelper");
 const logger = require("../util/logger");
+const database = require("../database/database");
+const config = require("../util/config");
 
 class GameMonitor {
     constructor(page, config) {
@@ -112,7 +114,7 @@ class GameMonitor {
 
                 // Handle bet result first
                 if (this.betManager.isWaitingForResult) {
-                    this.betManager.handleGameCrash(this.previousMultiplier);
+                    await this.betManager.handleGameCrash(this.previousMultiplier);
                 }
 
                 // Capture complete game round data and store in history
@@ -146,6 +148,21 @@ class GameMonitor {
 
                     // Store game round in stats tracker
                     this.statsTracker.addGameRound(gameRoundData);
+
+                    // Save game round to database if enabled
+                    if (config.DATABASE.enableLogging && database.isConnectedToDatabase()) {
+                        try {
+                            await database.saveGameRound({
+                                multiplier: this.previousMultiplier,
+                                timestamp: gameRoundData.timestamp,
+                                gameDuration: gameDuration
+                            });
+                            logger.debug(`Game round saved to database: ${this.previousMultiplier}x`);
+                        } catch (err) {
+                            // Log error but don't stop bot operation
+                            logger.error(`Failed to save game round to database: ${err.message}`);
+                        }
+                    }
 
                     // Update multiplier history for betting strategy
                     this.multiplierHistory.unshift(this.previousMultiplier);
