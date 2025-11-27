@@ -238,11 +238,196 @@ node scripts/exportData.js --format csv --no-headers | sort -t',' -k2 -n
 node scripts/exportData.js --format json | jq '.data | map(select(.multiplier > 5))'
 ```
 
-## Future Scripts
+## importData.js
 
-- `importData.js` - Import previously exported data back into database
-- `backupData.js` - Create timestamped backups of all data
-- `cleanupData.js` - Archive or delete old data based on age
+Data import/restore utility for restoring previously exported aviator game data.
+
+### Features
+
+- **Multiple formats**: Import from JSON or CSV files
+- **Auto-detection**: Automatically detect data type (game_rounds or bet_history)
+- **Validation**: Comprehensive data validation before import
+- **Duplicate detection**: Skip duplicate records automatically
+- **Dry-run mode**: Preview import operations without executing
+- **Batch operations**: Efficient bulk inserts for large datasets
+- **Progress indicators**: Show progress for large imports
+
+### Usage
+
+```bash
+# Basic usage - import JSON export file
+node scripts/importData.js --file exports/data_20240115.json
+
+# Import with duplicate skipping
+node scripts/importData.js --file backup.json --skip-duplicates --progress
+
+# Dry-run to preview import
+node scripts/importData.js --file data.json --dry-run
+
+# Import CSV file with explicit type
+node scripts/importData.js --file bets.csv --type bet_history
+
+# Validate data without importing
+node scripts/importData.js --file data.json --validate-only
+
+# Import with progress tracking
+node scripts/importData.js --file large_export.json --progress --skip-duplicates
+```
+
+### Command-Line Arguments
+
+#### Required Options
+
+- `--file [filepath]` - Path to import file (JSON or CSV)
+
+#### Data Type Options
+
+- `--type [type]` - Target table type:
+  - `game_rounds` - Game multiplier data
+  - `bet_history` - Betting history data
+  - `auto` - Auto-detect from file structure (default)
+
+#### Import Mode Options
+
+- `--skip-duplicates` - Skip duplicate records instead of failing
+- `--dry-run` - Preview import operations without executing
+- `--validate-only` - Only validate data structure and integrity
+
+#### Other Options
+
+- `--progress` - Show progress indicators during import
+- `--quiet` - Suppress informational messages
+- `--help, -h` - Show help message
+
+### Duplicate Detection
+
+The import tool automatically detects duplicates based on:
+
+**Game rounds**: Duplicates share same timestamp (±1 second) and multiplier value
+**Bet history**: Duplicates share same timestamp (±1 second), bet_amount, and target_multiplier
+
+Use `--skip-duplicates` to silently skip duplicate records or omit it to fail on first duplicate.
+
+### Data Validation
+
+The import tool validates:
+
+- Required fields are present for the data type
+- Numeric fields contain valid numbers (positive values)
+- Boolean fields contain true/false values
+- Timestamp fields contain valid dates
+- Data structure matches database schema
+
+Use `--validate-only` to check data integrity without importing.
+
+### Import Process
+
+1. **Read file**: Parse JSON or CSV file
+2. **Auto-detect type**: Determine if game_rounds or bet_history (if not specified)
+3. **Validate data**: Check all records for required fields and valid types
+4. **Check duplicates**: Query database for existing records (if skip-duplicates enabled)
+5. **Normalize data**: Convert field names and types to match database schema
+6. **Import**: Insert records in batches of 100
+7. **Summary**: Display imported and skipped record counts
+
+### Examples
+
+#### Import exported data file
+
+```bash
+node scripts/importData.js --file exports/data_20240115_120000.json
+```
+
+#### Preview import without executing
+
+```bash
+node scripts/importData.js --file backup.json --dry-run --progress
+```
+
+#### Import and skip duplicates
+
+```bash
+node scripts/importData.js \
+  --file archive.json \
+  --skip-duplicates \
+  --progress
+```
+
+#### Validate before importing
+
+```bash
+# First validate
+node scripts/importData.js --file data.json --validate-only
+
+# If validation passes, import
+node scripts/importData.js --file data.json --skip-duplicates
+```
+
+#### Import CSV file
+
+```bash
+node scripts/importData.js --file bets.csv --type bet_history --progress
+```
+
+### Exit Codes
+
+- `0` - Success
+- `1` - Error (validation failed, file not found, database error, etc.)
+
+### Troubleshooting
+
+**Error: Cannot detect type from empty data**
+- The import file contains no records
+- Check that the file has data
+
+**Error: Missing required field: multiplier**
+- Validation failed due to missing fields
+- Check that export file has correct structure
+- Use `--validate-only` to see all validation errors
+
+**Error: Database pool not initialized**
+- Database connection failed
+- Check database configuration in config.js
+- Ensure database is running
+
+**Warning: Skipping N duplicate records**
+- Duplicates were found and skipped (with --skip-duplicates)
+- This is expected when re-importing data
+
+### Performance Tips
+
+- Use `--skip-duplicates` for re-importing data
+- Use `--progress` to monitor long imports
+- Import validates all data before starting to catch errors early
+- Batch size of 100 records balances speed and memory
+
+## backupData.js
+
+Creates timestamped backups of all aviator game data.
+
+### Usage
+
+```bash
+# Create backup of all data
+node scripts/backupData.js
+
+# Create backup with progress indicator
+node scripts/backupData.js --progress
+```
+
+## cleanupData.js
+
+Archives old export files to keep the exports directory clean.
+
+### Usage
+
+```bash
+# Archive files older than 30 days
+node scripts/cleanupData.js
+
+# Preview what would be archived (dry-run)
+node scripts/cleanupData.js --dry-run
+```
 
 ## License
 
