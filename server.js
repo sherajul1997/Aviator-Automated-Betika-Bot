@@ -208,8 +208,21 @@ class AviatorDataServer {
             }
         });
 
-        // Export data in specified format
-        this.app.get('/api/export/:format', async (req, res) => {
+        // Helper function to parse filter options from query parameters
+        const parseFilterOptions = (query) => {
+            const filterOptions = {};
+            if (query.fromDate) filterOptions.fromDate = query.fromDate;
+            if (query.toDate) filterOptions.toDate = query.toDate;
+            if (query.betPlacedOnly === 'true') filterOptions.betPlacedOnly = true;
+            if (query.wonOnly === 'true') filterOptions.wonOnly = true;
+            if (query.minMultiplier) filterOptions.minMultiplier = parseFloat(query.minMultiplier);
+            if (query.maxMultiplier) filterOptions.maxMultiplier = parseFloat(query.maxMultiplier);
+            if (query.limit) filterOptions.limit = parseInt(query.limit);
+            return filterOptions;
+        };
+
+        // Helper function to handle export logic
+        const handleExport = async (req, res, format) => {
             try {
                 if (!this.statsTracker) {
                     return res.status(503).json({
@@ -218,25 +231,8 @@ class AviatorDataServer {
                     });
                 }
 
-                const format = req.params.format.toLowerCase();
-
-                // Validate format
-                if (!['json', 'csv'].includes(format)) {
-                    return res.status(400).json({
-                        error: 'Invalid format',
-                        message: 'Supported formats: json, csv'
-                    });
-                }
-
                 // Parse filtering options
-                const filterOptions = {};
-                if (req.query.fromDate) filterOptions.fromDate = req.query.fromDate;
-                if (req.query.toDate) filterOptions.toDate = req.query.toDate;
-                if (req.query.betPlacedOnly === 'true') filterOptions.betPlacedOnly = true;
-                if (req.query.wonOnly === 'true') filterOptions.wonOnly = true;
-                if (req.query.minMultiplier) filterOptions.minMultiplier = parseFloat(req.query.minMultiplier);
-                if (req.query.maxMultiplier) filterOptions.maxMultiplier = parseFloat(req.query.maxMultiplier);
-                if (req.query.limit) filterOptions.limit = parseInt(req.query.limit);
+                const filterOptions = parseFilterOptions(req.query);
 
                 // Export data using statsTracker
                 const filePath = await this.statsTracker.exportData(format, {
@@ -276,6 +272,33 @@ class AviatorDataServer {
                     message: error.message
                 });
             }
+        };
+
+        // Export data as JSON
+        // Query parameters: fromDate, toDate, betPlacedOnly, wonOnly, minMultiplier, maxMultiplier, limit
+        this.app.get('/api/export/json', async (req, res) => {
+            await handleExport(req, res, 'json');
+        });
+
+        // Export data as CSV
+        // Query parameters: fromDate, toDate, betPlacedOnly, wonOnly, minMultiplier, maxMultiplier, limit
+        this.app.get('/api/export/csv', async (req, res) => {
+            await handleExport(req, res, 'csv');
+        });
+
+        // Export data in specified format (flexible endpoint)
+        this.app.get('/api/export/:format', async (req, res) => {
+            const format = req.params.format.toLowerCase();
+
+            // Validate format
+            if (!['json', 'csv'].includes(format)) {
+                return res.status(400).json({
+                    error: 'Invalid format',
+                    message: 'Supported formats: json, csv'
+                });
+            }
+
+            await handleExport(req, res, format);
         });
 
         // Get list of exported files
