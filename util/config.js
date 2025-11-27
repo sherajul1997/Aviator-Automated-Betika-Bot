@@ -28,7 +28,8 @@ const config = {
         host: 'localhost',
         user: 'root',
         password: '',
-        database: 'aviatorBot'
+        database: 'aviatorBot',
+        enableLogging: true  // Enable/disable database logging (set to false to disable persistence)
     },
     BETTING_STRATEGIES: {
         CONSERVATIVE: {
